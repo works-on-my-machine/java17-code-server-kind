@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: code-server-init
+data:
+  init.sh: |-
+    updaterc() {
+        echo "Updating /config/.bashrc..."
+        if [[ "$(cat /config/.bashrc)" != *"$1"* ]]; then
+            echo -e "$1" >> /etc/bash.bashrc
+        fi
+    }
+    installohmybash() {
+        echo "Installing oh-my-bash..."
+        if [[ ! -d /config/.oh-my-bash ]]; then
+            git clone git://github.com/ohmybash/oh-my-bash.git /config/.oh-my-bash
+            chown -R abc:abc /config/.oh-my-bash
+            cp /config/.oh-my-bash/templates/bashrc.osh-template /config/.bashrc
+            chown abc:abc /config/.bashrc
+        fi
+    }
+
+    export SDKMAN_DIR="/usr/local/sdkman"
+    set -e
+
+    apt-get update
+    apt-get -y install --no-install-recommends git curl ca-certificates zip unzip sed
+
+    installohmybash
+    if [ ! -d "${SDKMAN_DIR}" ]; then
+        # Create sdkman group, dir, and set sticky bit
+        if ! cat /etc/group | grep -e "^sdkman:" > /dev/null 2>&1; then
+            groupadd -r sdkman
+        fi
+        usermod -a -G sdkman abc
+        umask 0002
+        # Install SDKMAN
+        curl -sSL "https://get.sdkman.io?rcupdate=false" | bash
+        chown -R :sdkman ${SDKMAN_DIR}
+        find ${SDKMAN_DIR} -type d | xargs -d '\n' chmod g+s
+        # Add sourcing of sdkman into bashrc/zshrc files (unless disabled)
+        updaterc "export SDKMAN_DIR=${SDKMAN_DIR}\n. \${SDKMAN_DIR}/bin/sdkman-init.sh"
+    fi
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    name: code-server
+  name: code-server
+spec:
+  containers:
+    - env:
+        - name: PUID
+          value: "1000"
+        - name: PGID
+          value: "1000"
+        - name: TZ
+          value: Europe/Istanbul
+        - name: PASSWORD
+          value: "123456"
+        - name: SUDO_PASSWORD
+          value: "123456"
+      image: linuxserver/code-server@sha256:995c198ad5d08f17ca3dbeabc4fcc00b779f974138ffb1459d8c59f793733f90
+      livenessProbe:
+        httpGet:
+          path: /healthz
+          port: 8443
+      name: code-server
+      ports:
+        - containerPort: 8443
+      resources:
+        limits:
+          cpu: 2000m
+          memory: 4000Mi
+        requests:
+          cpu: 1000m
+          memory: 1000Mi
+      volumeMounts:
+        - mountPath: /config/custom-cont-init.d
+          name: init-volume
+  volumes:
+    - configMap:
+        items:
+          - key: init.sh
+            path: init.sh
+        name: code-server-init
+      name: init-volume
